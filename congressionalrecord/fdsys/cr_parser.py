@@ -5,14 +5,15 @@ from datetime import datetime
 import re
 import xml.etree.cElementTree as ET
 from subclasses import crItem
-    
+
+
 class ParseCRDir(object):
     
     def gen_dir_metadata(self):
         ''' Load up all metadata for this directory
          from the mods file.'''
         with open(self.mods_path,'r') as mods_file:
-            self.mods = BeautifulSoup(mods_file)
+            self.mods = BeautifulSoup(mods_file,"lxml")
         
     def __init__(self, abspath, **kwargs):
         
@@ -28,7 +29,7 @@ class ParseCRFile(object):
     re_vol = r' Congressional Record Vol. (?P<vol>[0-9]+), No. (?P<num>[0-9]+)$'
     re_vol_file =   r'^\[Congressional Record Volume (?P<vol>[0-9]+), Number (?P<num>[0-9]+)'\
                     + r' \((?P<wkday>[A-Za-z]+), (?P<month>[A-Za-z]+) (?P<day>[0-9]+), (?P<year>[0-9]{4})\)\]'
-    re_chamber =  r'\[(?P<chamber>[A-Za-z]+)\]'
+    re_chamber =  r'\[(?P<chamber>[A-Za-z\s]+)\]'
     re_pages =  r'\[Page[s]? (?P<pages>[\w\-]+)\]'
     re_trail = r'From the Congressional Record Online'\
       + r' through the Government Publishing Office \[www.gpo.gov\]$'
@@ -87,80 +88,14 @@ class ParseCRFile(object):
     # works, honest
     re_recorder_ncj = (r'^\s+(?P<start>'
                        + r'(Pending:)'
-                       + r'|(By M(r|rs|s|iss)[\.]? [a-zA-Z]+))')
+                       + r'|(By M(r|rs|s|iss)[\.]? [a-zA-Z]+))'
+                       )
     re_clerk = r'^\s+(?P<start>The Clerk (read|designated))'
     re_allcaps = r'^ \s*(?!([_=]+|-{3,}))(?P<title>([A-Z]+[^a-z]+))$'
     re_linebreak = r'\s+([_=]+|-{3,})\s*'
     re_newpage =   r'\s*\[\[Page \w+\]\]'
     re_timestamp = r'\s+\{time\}\s+\d{4}'
 
-    """
-    This is a dict of line cases.
-    In previous versions, these relations were called
-    explicitly multiple times in multiple places.
-
-    This way is more extensible and easier to track cases.
-
-    Usage:
-    If break_flow == True: <interrupt current item>
-    If speaker_re == True: speaker = re.match(line,
-                                     <pattern from patterns>).
-                                     .group(<speaker_group>)
-    else: speaker = <speaker>
-
-    """
-    item_types = { 'speech':
-                   {'patterns':['Mr. BOEHNER'],
-                    'speaker_re':True,
-                    'speaker_group':'name',
-                    'break_flow':True
-                    },
-                    'recorder':
-                    {'patterns':[re_recorderstart,
-                                 re_recorderend,
-                                 re_recorder_ncj],
-                    'speaker_re':False,
-                    'speaker':'The RECORDER',
-                    'break_flow':True
-                    },
-                    'clerk':
-                    {'patterns':[re_clerk],
-                     'speaker_re':False,
-                     'speaker':'The Clerk',
-                     'break_flow':True
-                     },
-                     'linebreak':
-                     {'patterns':[re_linebreak],
-                      'speaker_re':False,
-                      'speaker':'None',
-                      'break_flow':False
-                      },
-                      'rollcall':
-                      {'patterns':[re_rollcall],
-                      'speaker_re':False,
-                      'speaker':'None',
-                      'break_flow':True
-                      },
-                      'metacharacters':
-                      {'patterns':[re_timestamp,
-                                   re_newpage],
-                       'speaker_re':False,
-                       'speaker':'None',
-                       'break_flow':False
-                       },
-                      'empty_line':
-                      {'patterns':[r'(^[\s]+$)'],
-                       'speaker_re':False,
-                       'speaker':'None',
-                       'break_flow':False
-                       },
-                       'title':
-                       {'patterns':[re_allcaps],
-                        'speaker_re':False,
-                        'speaker':'None',
-                        'break_flow':True}
-                    }
-    
     # Metadata-making functions
     def title_id(self):
         id_num = self.num_titles
@@ -168,27 +103,45 @@ class ParseCRFile(object):
         return id_num
         
     def make_re_newspeaker(self):
-        speaker_list = '|'.join([mbr['cr_name'] for mbr in self.speakers \
-        if mbr['role'] == 'SPEAKING'])
-        re_speakers = r'^(  |<bullet> )(?P<name>((' + speaker_list + ')|(((The ((VICE|ACTING|Acting) )?(PRESIDENT|SPEAKER|CHAIR(MAN)?)( pro tempore)?)|(The PRESIDING OFFICER)|(The CLERK)|(The CHIEF JUSTICE)|(The VICE PRESIDENT)|(Mr\. Counsel [A-Z]+))( \([A-Za-z.\- ]+\))?)\.))'
+        speaker_list = '|'.join([mbr for mbr in self.speakers.keys() \
+        if self.speakers[mbr]['role'] == 'SPEAKING'])
+        if len(speaker_list) > 0:
+            re_speakers = r'^(\s{1,2}|<bullet>)(?P<name>((' + speaker_list + ')|(((The ((VICE|ACTING|Acting) )?(PRESIDENT|SPEAKER|CHAIR(MAN)?)( pro tempore)?)|(The PRESIDING OFFICER)|(The CLERK)|(The CHIEF JUSTICE)|(The VICE PRESIDENT)|(Mr\. Counsel [A-Z]+))( \([A-Za-z.\- ]+\))?)\.))'
+        else:
+            re_speakers = r'^(\s{1,2}|<bullet>)(?P<name>((((The ((VICE|ACTING|Acting) )?(PRESIDENT|SPEAKER|CHAIR(MAN)?)( pro tempore)?)|(The PRESIDING OFFICER)|(The CLERK)|(The CHIEF JUSTICE)|(The VICE PRESIDENT)|(Mr\. Counsel [A-Z]+))( \([A-Za-z.\- ]+\))?)\.))'
         return re_speakers
     
+    def people_helper(self,tagobject):
+        output_dict = {}
+        if 'bioguideid' in tagobject.attrs:
+            output_dict['bioguideid'] = tagobject['bioguideid']
+        elif 'bioGuideId' in tagobject.attrs:
+            output_dict['bioguideid'] = tagobject['bioGuideId']
+        else:
+            output_dict['bioguideid'] = 'None'
+        for key in ['chamber','congress','party','state','role']:
+            if key in tagobject.attrs:
+                output_dict[key] = tagobject[key]
+            else:
+                output_dict[key] = 'None'
+        try:
+            output_dict['name_full'] = tagobject.find('name',{'type':'authority-fnf'}).string
+        except:
+            output_dict['name_full'] = 'None'
+        return output_dict
+        
     def find_people(self):
         mbrs = self.doc_ref.find_all('congmember')
         if mbrs:
             for mbr in mbrs:
-                self.speakers.append({ \
-                'cr_name':mbr.find('name',{'type':'parsed'}).string, \
-                'bioguideid':mbr['bioguideid'], 'chamber':mbr['chamber'], \
-                'congress':mbr['congress'], 'party':mbr['party'], \
-                'state':mbr['state'],'role':mbr['role'], \
-                'name_full':mbr.find('name',{'type':'authority-fnf'}).string \
-                })
-
+                self.speakers[mbr.find('name',
+                                       {'type':'parsed'}).string] = \
+                                       self.people_helper(mbr)
+    
     def find_related_bills(self):
         related_bills = self.doc_ref.find_all('bill')
         if len(related_bills) > 0:
-            self.doc_related_bills = \
+            self.crdoc['related_bills'] = \
               [bill.attrs for bill in related_bills]
         
     def date_from_entry(self):
@@ -233,7 +186,7 @@ class ParseCRFile(object):
         self.lines_remaining = True
         with open(self.filepath, 'r') as htm_file:
             htm_lines = htm_file.read()
-            htm_text = BeautifulSoup(htm_lines)
+            htm_text = BeautifulSoup(htm_lines,"lxml")
         text = htm_text.pre.text.split('\n')
         for line in text:
             self.cur_line = line
@@ -261,7 +214,12 @@ class ParseCRFile(object):
         header_in = self.the_text.next()
         match = re.match(self.re_chamber, header_in)
         if match:
-            chamber = match.group('chamber')
+            if match.group('chamber') == 'Extensions of Remarks':
+                chamber = 'House'
+                extensions = True
+            else:
+                chamber = match.group('chamber')
+                extensions = False
         else:
             return False
         header_in = self.the_text.next()
@@ -276,14 +234,16 @@ class ParseCRFile(object):
             pass
         else:
             return False
-        return vol, num, wkday, month, day, year, chamber, pages
+        return vol, num, wkday, month, day, year, chamber, pages, extensions
 
     def write_header(self):
+        self.crdoc['id'] = self.access_path
         header = self.get_header()
         if header:
             self.crdoc['header'] = {'vol':header[0],'num':header[1],\
             'wkday':header[2],'month':header[3],'day':header[4],\
-            'year':header[5],'chamber':header[6],'pages':header[7]}
+            'year':header[5],'chamber':header[6],'pages':header[7],\
+            'extension':header[8]}
 
     def get_title(self):
         """
@@ -291,6 +251,9 @@ class ParseCRFile(object):
         Parse consecutive title-matching strings into a title str
         Stop on the first line that isn't empty and isn't a title
         Return the title str if it exists.
+
+        We pretty much assume the first title on the page applies
+        to everything below it
         """
 
         title_str = ''
@@ -311,22 +274,23 @@ class ParseCRFile(object):
 
     def write_page(self):
         turn = 0
-        tid = self.title_id()
         title = self.get_title()
+        the_content = []
         if title:
-            the_content = { 'title_id': tid, 'title': title, 'items': []}
-            while True:
-                # while not re.match(self.re_allcaps,self.cur_line):
-                try:
-                    item = crItem(self).item
+            self.crdoc['title'] = title
+        while True:
+            # while not re.match(self.re_allcaps,self.cur_line):
+            try:
+                item = crItem(self).item
+                if item['kind'] == 'speech':
                     item['turn'] = turn
                     turn += 1
-                    the_content['items'].append(item)
-                except Exception, e:
-                    print '{0}'.format(e)
-                    break
-                
-            self.crdoc['content'].append(the_content)
+                the_content.append(item)
+            except Exception, e:
+                print '{0}'.format(e)
+                break
+
+        self.crdoc['content'] = the_content
 
         print 'Stopped. The last line is: {0}'.format(self.cur_line)
 
@@ -336,8 +300,93 @@ class ParseCRFile(object):
         """
         self.the_text = self.read_htm_file()
         self.write_header()
-        # self.write_page()
-        
+        self.write_page()
+
+    def emptystr(self):
+        """
+        Returns an empty line for certain
+        edge cases, like line breaks
+        """
+        return ''
+
+    """
+    This is a dict of line cases.
+    In previous versions, these relations were called
+    explicitly multiple times in multiple places.
+
+    This way is more extensible and easier to track cases.
+
+    Usage:
+    If break_flow == True: <interrupt current item>
+    If speaker_re == True: speaker = re.match(line,
+                                     <pattern from patterns>).
+                                     .group(<speaker_group>)
+    else: speaker = <speaker>
+
+    It has to come after some of the functions because of
+    how I want to handle special cases.
+    """
+    item_types = { 'speech':
+                   {'patterns':['Mr. BOEHNER'],
+                    'speaker_re':True,
+                    'speaker_group':'name',
+                    'break_flow':True,
+                    'special_case':False
+                    },
+                    'recorder':
+                    {'patterns':[re_recorderstart,
+                                 re_recorderend,
+                                 re_recorder_ncj],
+                    'speaker_re':False,
+                    'speaker':'The RECORDER',
+                    'break_flow':True,
+                    'special_case':False
+                    },
+                    'clerk':
+                    {'patterns':[re_clerk],
+                     'speaker_re':False,
+                     'speaker':'The Clerk',
+                     'break_flow':True,
+                     'special_case':False
+                     },
+                     'linebreak':
+                     {'patterns':[re_linebreak],
+                      'speaker_re':False,
+                      'speaker':'None',
+                      'break_flow':True,
+                      'special_case':True,
+                      'condition':emptystr
+                      },
+                      'rollcall':
+                      {'patterns':[re_rollcall],
+                      'speaker_re':False,
+                      'speaker':'None',
+                      'break_flow':True,
+                      'special_case':False
+                      },
+                      'metacharacters':
+                      {'patterns':[re_timestamp,
+                                   re_newpage],
+                       'speaker_re':False,
+                       'speaker':'None',
+                       'break_flow':False,
+                       'special_case':False
+                       },
+                      'empty_line':
+                      {'patterns':[r'(^[\s]+$)'],
+                       'speaker_re':False,
+                       'speaker':'None',
+                       'break_flow':False,
+                       'special_case':False
+                       },
+                       'title':
+                       {'patterns':[re_allcaps],
+                        'speaker_re':False,
+                        'speaker':'None',
+                        'break_flow':True,
+                        'special_case':True,
+                        'condition':get_title}
+                    }
 
     def __init__(self, abspath, cr_dir, **kwargs):
 
@@ -346,7 +395,7 @@ class ParseCRFile(object):
         self.crdoc['header'] = False
         self.crdoc['content'] = []
         self.num_titles = 0
-        self.speakers = []
+        self.speakers = {}
         self.doc_ref = ''
         self.doc_time = -1
         self.doc_start_time = -1
@@ -357,7 +406,7 @@ class ParseCRFile(object):
         
         # file data
         self.filepath = abspath
-        self.filedir, self.filename = os.path.split(self.filepath)
+        self.filedir, self.filename = os.path.split(abspath)
         self.cr_dir = cr_dir
         self.access_path = self.filename.split('.')[0]
 
