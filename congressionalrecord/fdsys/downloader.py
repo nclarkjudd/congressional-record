@@ -96,8 +96,9 @@ class Downloader(object):
 
                   yield : For each day of the Record the user specifies,
                           the downloader acts like a generator, yielding that day's
-                          "crfile" dictionary. 
+                          "crfile" dictionary.
         """
+        
         self.status = 'idle'
         logging.debug('Downloader object ready with params:')
         logging.debug(','.join(['='.join([key,value]) for key,value in kwargs.items()]))
@@ -130,10 +131,10 @@ class Downloader(object):
 
         else:
             return None
-    
-                                                                       
-                            
-        
+
+
+
+
 
 class downloadRequest(object):
 
@@ -142,7 +143,7 @@ class downloadRequest(object):
     retry = Retry(total=3,backoff_factor=300)
     retry.BACKOFF_MAX = 602
     http = PoolManager(timeout=timeout,retries=retry)
-    
+
     def __init__(self,url,filename):
         self.status = False
         try:
@@ -169,14 +170,14 @@ class downloadRequest(object):
             with open(filename,'wb') as outfile:
                 outfile.write(self.binary_content)
             logging.info('Wrote {0}'.format(filename))
-        else:            
+        else:
             logging.info('No download for {0} and terminating with unexpected condition.\n'.format(url))
-            
 
-    
+
+
 class fdsysDL(object):
     fdsys_base = 'http://www.gpo.gov/fdsys/pkg/CREC-'
-    
+
     def download_day(self,day,outpath):
         assert datetime.strptime(day,"%Y-%m-%d"), "Malformed date field. Must be 'YYYY-MM-DD'"
         the_url = self.fdsys_base + day + '.zip'
@@ -237,9 +238,3 @@ class fdsysExtract(object):
         os.remove(abspath)
         self.status += 'deletedZip'
         logging.info('Extractor completed with status {0}'.format(self.status))
-
-
-
-        
-
-        
